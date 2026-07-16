@@ -29,7 +29,18 @@ jobs:
           docker compose build
           docker compose push
 
-      # 4. SSH into EC2 and pull the new images, then restart
+      # 4. Copy docker-compose.yml to EC2
+      - name: Copy docker-compose.yml to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "backend/docker-compose.yml"
+          target: "~/smart-classroom"
+          strip_components: 1
+
+      # 5. SSH into EC2, pull new images and restart
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -37,7 +48,7 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/Smart_Classroom/backend
+            cd ~/smart-classroom
             export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             docker compose pull
             docker compose up -d
