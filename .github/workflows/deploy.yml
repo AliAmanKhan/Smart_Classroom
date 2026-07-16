@@ -3,22 +3,25 @@ name: Deploy to EC2
 on:
   push:
     branches:
-      - master # Or your default branch
+      - master
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
-      # 1. Log in to Docker Hub
+      # 1. Checkout the repository code onto the runner
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # 2. Build and Push Backend Images
-      # You can repeat this block for frontend, or any other services
+      # 3. Build and Push all backend images using docker compose
       - name: Build and Push Docker Images
         run: |
           cd backend
@@ -26,7 +29,7 @@ jobs:
           docker compose build
           docker compose push
 
-      # 3. Deploy to EC2 (Pull and Run)
+      # 4. SSH into EC2 and pull the new images, then restart
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -34,18 +37,7 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd ~/smart-classroom/Smart_Classroom
-            git pull origin master
-            
-            # Navigate to backend and replace the local 'build' with Docker Hub images
-            cd backend
-            
-            # Since your docker-compose.yml uses local 'build' blocks, we can override the image
-            # Or temporarily export the IMAGE_PREFIX if you update your docker-compose.yml
-            # For now, pulling manually or modifying the docker-compose to use these images is required.
-            
-            # The easiest way is to sed/replace the build contexts with the docker hub image, 
-            # but ideally you update your docker-compose.yml to have `image: your-docker-user/service`
-            
-            docker-compose pull
-            docker-compose up -d
+            cd ~/Smart_Classroom/backend
+            export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
+            docker compose pull
+            docker compose up -d
