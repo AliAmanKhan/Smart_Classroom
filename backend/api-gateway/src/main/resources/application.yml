@@ -1,0 +1,97 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST}
+      port: ${SPRING_DATA_REDIS_PORT}
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      default-filters:
+        - AddRequestHeader=X-Internal-Key, ${INTERNAL_API_KEY}
+      routes:
+
+        # ── IAM / Auth ───────────────────────────────────────────────
+        # Strictest limit: 5 req/s burst, 3 req/s replenish rate
+        # Prevents brute-force login and registration spam
+        - id: iam-service
+          uri: lb://iam-service
+          predicates:
+            - Path=/api/auth/**, /api/users/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 3
+                redis-rate-limiter.burstCapacity: 5
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userKeyResolver}"
+
+        # ── Classroom Service ─────────────────────────────────────────
+        # Standard limit: 30 req/s burst, 20 req/s replenish
+        - id: classroom-service
+          uri: lb://classroom-service
+          predicates:
+            - Path=/api/classrooms/**, /api/telemetry/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 30
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userKeyResolver}"
+
+        # ── Material Service ──────────────────────────────────────────
+        # Relaxed limit: file uploads are expensive — prevent upload floods
+        # 10 req/s burst, 5 req/s replenish for upload paths
+        - id: material-service
+          uri: lb://material-service
+          predicates:
+            - Path=/api/materials/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userKeyResolver}"
+
+        # ── Assessment Service ────────────────────────────────────────
+        # Standard limit: 30 req/s burst, 20 req/s replenish
+        - id: assessment-service
+          uri: lb://assessment-service
+          predicates:
+            - Path=/api/assignments/**, /api/submissions/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 30
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userKeyResolver}"
+
+        # ── Live Class Service ────────────────────────────────────────
+        # Relaxed limit: WebSocket upgrade + SSE polling patterns
+        # 50 req/s burst, 30 req/s replenish
+        - id: live-class-service
+          uri: lb://live-class-service
+          predicates:
+            - Path=/api/live/**, /ws/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 50
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userKeyResolver}"
+
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/

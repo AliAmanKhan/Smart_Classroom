@@ -1,0 +1,12 @@
+CREATE DATABASE IF NOT EXISTS iam_db;
+CREATE DATABASE IF NOT EXISTS classroom_db;
+CREATE DATABASE IF NOT EXISTS material_db;
+CREATE DATABASE IF NOT EXISTS assessment_db;
+CREATE DATABASE IF NOT EXISTS live_class_db;
+
+GRANT ALL PRIVILEGES ON iam_db.* TO 'root'@'%';
+GRANT ALL PRIVILEGES ON classroom_db.* TO 'root'@'%';
+GRANT ALL PRIVILEGES ON material_db.* TO 'root'@'%';
+GRANT ALL PRIVILEGES ON assessment_db.* TO 'root'@'%';
+GRANT ALL PRIVILEGES ON live_class_db.* TO 'root'@'%';
+FLUSH PRIVILEGES;

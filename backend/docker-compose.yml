@@ -1,0 +1,296 @@
+# ─────────────────────────────────────────────────────────────────────
+# Smart Classroom – Docker Compose
+# Run: docker compose up --build
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────
+
+  mysql:
+    image: mysql:8.3
+    container_name: sc-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+    # No host port mapping — services connect via internal sc-network
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sc-network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: sc-redis
+    restart: unless-stopped
+    # No host port mapping — services connect via internal sc-network
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sc-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: sc-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    # No host port mapping — services connect via internal sc-network
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sc-network
+
+
+
+  # ── Service Registry ──────────────────────────────────────────────
+
+  eureka-server:
+    build:
+      context: ./eureka-server
+    image: ${DOCKER_USERNAME:-local}/sc-eureka-server:latest
+    container_name: sc-eureka
+    restart: unless-stopped
+    ports:
+      - "8761:8761"
+    environment:
+      SPRING_APPLICATION_NAME: eureka-server
+      SERVER_PORT: 8761
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    networks:
+      - sc-network
+
+  # ── API Gateway ───────────────────────────────────────────────────
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    image: ${DOCKER_USERNAME:-local}/sc-api-gateway:latest
+    container_name: sc-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_APPLICATION_NAME: api-gateway
+      SERVER_PORT: 8080
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+  # ── IAM Service ───────────────────────────────────────────────────
+
+  iam-service:
+    build:
+      context: ./iam-service
+    image: ${DOCKER_USERNAME:-local}/sc-iam-service:latest
+    container_name: sc-iam
+    restart: unless-stopped
+    environment:
+      SPRING_APPLICATION_NAME: iam-service
+      SERVER_PORT: 8081
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/iam_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-smtp.gmail.com}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_AUTH:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_STARTTLS:-true}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+  # ── Classroom Service ─────────────────────────────────────────────
+
+  classroom-service:
+    build:
+      context: ./classroom-service
+    image: ${DOCKER_USERNAME:-local}/sc-classroom-service:latest
+    container_name: sc-classroom
+    restart: unless-stopped
+    environment:
+      SPRING_APPLICATION_NAME: classroom-service
+      SERVER_PORT: 8082
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/classroom_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+  # ── Material Service ──────────────────────────────────────────────
+
+  material-service:
+    build:
+      context: ./material-service
+    image: ${DOCKER_USERNAME:-local}/sc-material-service:latest
+    container_name: sc-material
+    restart: unless-stopped
+    environment:
+      SPRING_APPLICATION_NAME: material-service
+      SERVER_PORT: 8083
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/material_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      SPRING_AI_OPENAI_API_KEY: ${NVIDIA_API_KEY}
+      AI_PROCESSING_TRANSCRIPT_SAFE_THRESHOLD: 15000
+      AI_PROCESSING_TRANSCRIPT_CHUNK_SIZE: 8000
+      AI_PROCESSING_TRANSCRIPT_CHUNK_OVERLAP: 500
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_REGION: ${AWS_S3_REGION}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+  # ── Assessment Service ────────────────────────────────────────────
+
+  assessment-service:
+    build:
+      context: ./assessment-service
+    image: ${DOCKER_USERNAME:-local}/sc-assessment-service:latest
+    container_name: sc-assessment
+    restart: unless-stopped
+    environment:
+      SPRING_APPLICATION_NAME: assessment-service
+      SERVER_PORT: 8084
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/assessment_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_REGION: ${AWS_S3_REGION}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+  # ── Live Class Service ────────────────────────────────────────────
+
+  live-class-service:
+    build:
+      context: ./live-class-service
+    image: ${DOCKER_USERNAME:-local}/sc-live-class-service:latest
+    container_name: sc-live-class
+    restart: unless-stopped
+    environment:
+      SPRING_APPLICATION_NAME: live-class-service
+      SERVER_PORT: 8085
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+    depends_on:
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - sc-network
+
+# ── Volumes ───────────────────────────────────────────────────────────
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+
+# ── Network ───────────────────────────────────────────────────────────
+
+networks:
+  sc-network:
+    driver: bridge
