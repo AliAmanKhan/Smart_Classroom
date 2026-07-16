@@ -74,6 +74,7 @@ services:
     environment:
       SPRING_APPLICATION_NAME: eureka-server
       SERVER_PORT: 8761
+      EUREKA_HOSTNAME: eureka-server
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP || exit 1"]
       interval: 15s
