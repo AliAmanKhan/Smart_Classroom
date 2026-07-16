@@ -1,5 +1,6 @@
 # Backend
 backend/target/
+**/target/
 backend/.mvn/
 backend/mvnw
 backend/mvnw.cmd
